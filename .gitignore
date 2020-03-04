@@ -1,0 +1,29 @@
+# vscode
+.vscode
+
+# Mac
+.DS_Store
+._.DS_Store
+
+# Jupyter
+.ipynb_checkpoints
+
+# python
+*.pyc
+*.pro
+*~
+__pycache__
+
+# data
+data/kangaroo
+data/VOCdevkit
+*.tar
+*.tfrecord
+
+# model
+model_data/*.weights
+model_data/*.h5
+
+# Tensorflow
+checkpoints/
+logs/
