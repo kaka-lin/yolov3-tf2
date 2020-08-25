@@ -36,7 +36,17 @@ $ wget https://pjreddie.com/media/files/yolov3.weights -O model_data/yolov3.weig
 
 ## Step-by-Step
 
-- yolov3.ipynb
+```yolov3_step_by_step.ipynb```
+
+1. Jupyter Notebook
+
+    ```bash
+    $ jupyter notebook
+    ```
+
+2. Colab
+
+    [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/kaka-lin/yolov3-tf2/blob/master/yolov3_step_by_step.ipynb)
 
 ## Acknowledgments
 
