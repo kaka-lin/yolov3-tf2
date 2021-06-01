@@ -166,8 +166,6 @@ def yolo_boxes(pred, anchors, classes):
     box_wh = pred[..., 2:4]
     box_confidence = tf.sigmoid(pred[..., 4:5])
     box_class_probs = tf.sigmoid(pred[..., 5:])
-    # Darknet raw box
-    pred_raw_box = tf.concat((box_xy, box_wh), axis=-1)
 
     # box_xy: (grid_size, grid_size, num_anchors, 2)
     # grid: (grdid_siez, grid_size, 1, 2)
@@ -180,7 +178,7 @@ def yolo_boxes(pred, anchors, classes):
     box_wh = tf.exp(box_wh) * anchors
     pred_box = tf.concat((box_xy, box_wh), axis=-1)
 
-    return pred_box, box_confidence, box_class_probs, pred_raw_box
+    return pred_box, box_confidence, box_class_probs
 
 
 def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
@@ -315,15 +313,25 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
 ###########################################################################################
 # Post-processing
 def yolo_eval(yolo_outputs,
-              image_shape=(416, 416),
-              anchors=yolo_anchors,
+              image_shape,
+              input_dims=(416, 416),
               classes=80,
               max_boxes=100,
               score_threshold=0.5,
               iou_threshold=0.5):
     # Retrieve outputs of the YOLO model.
-    for i in range(0,3):
-        _boxes, _box_scores = yolo_boxes_and_scores(yolo_outputs[i], anchors[6-3*i:9-3*i], classes)
+    num_layers = len(yolo_outputs)
+    anchors = yolo_anchors
+    anchor_mask = yolo_anchor_masks
+
+    for i in range(0, num_layers):
+        _boxes, _box_scores = yolo_boxes_and_scores(
+            yolo_outputs[i],
+            image_shape,
+            input_dims,
+            anchors[anchor_mask[i]],
+            classes)
+
         if i == 0:
             boxes, box_scores = _boxes, _box_scores
         else:
@@ -340,16 +348,46 @@ def yolo_eval(yolo_outputs,
     return scores, boxes, classes
 
 
-def yolo_boxes_and_scores(yolo_output, anchors=yolo_anchors, classes=80):
+def yolo_boxes_and_scores(yolo_output, image_shape, input_dims, anchors, classes):
     """Process output layer"""
     # yolo_boxes: pred_box, box_confidence, box_class_probs, pred_raw_box
-    pred_box, box_confidence, box_class_probs, pred_raw_box = yolo_boxes(yolo_output, anchors, classes)
+    pred_box, box_confidence, box_class_probs = yolo_boxes(
+        yolo_output, anchors, classes)
 
     # Convert boxes to be ready for filtering functions.
     # Convert YOLO box predicitions to bounding box corners.
     # (x, y, w, h) -> (x1, y1, x2, y2)
     box_xy = pred_box[..., 0:2]
     box_wh = pred_box[..., 2:4]
+
+    ####################################################
+    # Correct boxes: coord transformation
+    #  now coord in relative padding_image (model input)
+    #  we need to transform it to relative resized image
+    image_shape = np.array(image_shape[0:2]) # (w, h)
+    input_dims = np.array(input_dims)
+
+    # offser:
+    #  we put the resized_image into padding_image,
+    #  so we change coord from relative padding_image
+    #  to relative resized_image
+    scale = min(input_dims/image_shape)
+    new_shape = image_shape * scale # (w, h)
+    offset = (input_dims - new_shape) / 2. / input_dims
+
+    # scale:
+    #  now scale is relative padding_image
+    #  change it to relative resized_image
+    #    original_xy / input_dims = box_xy
+    #    original_xy / new_shape = box_xy_res
+    #    -> original_xy = box_xy * input_dims
+    #    -> box_xy_res = (box_xy * input_dims) / new_shape
+    #    -> box_xy_res = box_xy * (input_dims) / new_shape)
+    scale = input_dims / new_shape
+    box_xy = (box_xy - offset) * scale
+    box_wh *= scale
+    ####################################################
+
     box_x1y1 = box_xy - (box_wh / 2.)
     box_x2y2 = box_xy + (box_wh / 2.)
     boxes = tf.concat([box_x1y1, box_x2y2], axis=-1)

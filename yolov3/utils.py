@@ -1,149 +1,59 @@
-import colorsys
-import random
-
 import cv2
 import numpy as np
 import tensorflow as tf
-from absl import logging
-from absl.flags import FLAGS
 
-YOLOV3_LAYER_LIST = [
-    'yolo_darknet',
-    'yolo_conv_0',
-    'yolo_output_0',
-    'yolo_conv_1',
-    'yolo_output_1',
-    'yolo_conv_2',
-    'yolo_output_2',
-]
-
-
-def read_classes(classes_path):
-    with open(classes_path) as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-    return class_names
-
-
-def read_anchors(anchors_path):
-    with open(anchors_path) as f:
-        anchors = f.readline()
-        anchors = [float(x) for x in anchors.split(',')]
-        anchors = np.array(anchors).reshape(-1, 2)
-    return anchors
-
-
-# Scale boxes back to original image shape
-def scale_boxes(boxes, image_shape):
-    """ Scales the predicted boxes in order to be drawable on the image"""
-    height, width = image_shape
-    image_dims = tf.stack([width, height, width, height])
-    image_dims = tf.cast(tf.reshape(image_dims, [1, 4]), tf.float32)
-    boxes = boxes * image_dims
-    return boxes
-
-
-def generate_colors(class_names):
-    hsv_tuples = [(x / len(class_names), 1., 1.) for x in range(len(class_names))]
-    colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
-    colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), colors))
-    random.seed(10101)  # Fixed seed for consistent colors across runs.
-    random.shuffle(colors)  # Shuffle colors to decorrelate adjacent classes.
-    random.seed(None)  # Reset seed to default.
-    return colors
-
-
-def draw_outputs(image, outputs, class_names, colors):
+# For preprocess
+def letterbox_image(image, input_dims):
+    """resize image with unchanged aspect ratio using padding"""
     h, w, _ = image.shape
-    scores, boxes, classes = outputs
-    boxes = scale_boxes(boxes, (h, w))
+    desired_w, desired_h = input_dims # (416, 416)
+    scale = min(desired_w/w, desired_h/h)
 
-    for i in range(scores.shape[0]):
-        left, top, right, bottom = boxes[i]
-        top = max(0, np.floor(top + 0.5).astype('int32'))
-        left = max(0, np.floor(left + 0.5).astype('int32'))
-        bottom = min(h, np.floor(bottom + 0.5).astype('int32'))
-        right = min(w, np.floor(right + 0.5).astype('int32'))
-        class_id = int(classes[i])
-        predicted_class = class_names[class_id]
-        score = scores[i].numpy()
+    new_w, new_h = int(w * scale), int(h * scale)
+    image = cv2.resize(image, (new_w, new_h))
 
-        label = '{} {:.2f}'.format(predicted_class, score)
+    padding_image = np.ones((desired_h, desired_w, 3), np.uint8) * 128
+    # Put the image that after resized into the center of new image
+    # 將縮放後的圖片放入新圖片的正中央
+    h_start = (desired_h - new_h) // 2
+    w_start = (desired_w - new_w) // 2
+    padding_image[h_start:h_start+new_h, w_start:w_start+new_w, :] = image
 
-        # colors: RGB
-        cv2.rectangle(image, (left, top), (right, bottom), tuple(colors[class_id]), 6)
-
-        font_face = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1
-        font_thickness = 2
-
-        label_size = cv2.getTextSize(label, font_face, font_scale, font_thickness)[0]
-        label_rect_left, label_rect_top = int(left - 3), int(top - 3)
-        label_rect_right, label_rect_bottom = int(left + 3 + label_size[0]), int(top - 5 - label_size[1])
-        cv2.rectangle(image, (label_rect_left, label_rect_top), (label_rect_right, label_rect_bottom),
-                      tuple(colors[class_id]), -1)
-
-        cv2.putText(image, label, (left, int(top - 4)),
-                    font_face, font_scale, (0, 0, 0), font_thickness, cv2.LINE_AA)
-
-    return image
+    return padding_image
 
 
-def load_darknet_weights(model, weights_file):
-    with open(weights_file, 'rb') as wf:
-        major, minor, revision, seen, _ = np.fromfile(wf, dtype=np.int32, count=5)
-        layers = YOLOV3_LAYER_LIST
+# For postprocess
+def yolo_correct_boxes(boxes, image_shape, input_dims):
+    """Coordinate transformation
 
-        for layer_name in layers:
-            sub_model = model.get_layer(layer_name)
-            for i, layer in enumerate(sub_model.layers):
-                if not layer.name.startswith('conv2d'):
-                    continue
+    Because our output tensor are predictions on the `padding image`,
+    and not the original image, we need to transform the coord
+    from relative the padding image to relative the original image (after resize)
 
-                # BatchNormalization layer
-                batch_norm = None
-                if i + 1 < len(sub_model.layers) and \
-                        sub_model.layers[i + 1].name.startswith('batch_norm'):
-                    batch_norm = sub_model.layers[i + 1]
+    for exmaple:
+    orginal_image: (576, 768) -> (416, 416)
+    scale_size: min((416/576), (416/768)) = 0.54167
+    resized_image: (312, 416)
+    padding_image: (416. 416)
 
-                logging.info("{}/{} {}".format(
-                    sub_model.name, layer.name, 'bn' if batch_norm else 'bias'))
+    => the (x, y) point in `padding_image`
+    need to trandform to in `resized_image`
 
-                filters = layer.filters
-                kerner_size = layer.kernel_size[0]
-                #input_dim = layer.get_input_shape_at(0)[-1]
-                input_dim = layer.input_shape[-1]
+    => resize_y = (padding_y - scale * origin_h) / 2
 
-                if batch_norm is None:
-                    conv_bias = np.fromfile(wf, dtype=np.float32, count=filters)
-                else:
-                    # darknet [beta, gamma, mean, variance]
-                    bn_weights = np.fromfile(
-                        wf, dtype=np.float32, count=4*filters)
-                    # tf [gamma, beta, mean, variance]
-                    bn_weights = bn_weights.reshape((4, filters))[[1, 0, 2, 3]]
+    ### Note: (scale * origin_h) / 2 or (scale * origin_w) / 2
+    -> the shift between `resized_image` and `padding_image`
+    """
+    h, w = image_shape
+    desired_w, desired_h = input_dims
+    scale = min(desired_w/w, desired_h/h)
 
-                # darknet shape (out_dim, input_dim, height, width)
-                conv_shape = (filters, input_dim, kerner_size, kerner_size)
-                conv_weights = np.fromfile(
-                    wf, dtype=np.float32, count=np.product(conv_shape))
+    offset_x = (desired_w - scale * w) / 2. / desired_w
+    offset_y = (desired_h - scale * h) / 2 / desired_h
+    offsets = [offset_x, offset_y, offset_x, offset_y]
 
-                # tf shape (height, width, in_dim, out_dim)
-                conv_weights = conv_weights.reshape(
-                    conv_shape).transpose([2, 3, 1, 0])
+    boxes = (boxes - offsets)
 
-                if batch_norm is None:
-                    layer.set_weights([conv_weights, conv_bias])
-                else:
-                    layer.set_weights([conv_weights])
-                    batch_norm.set_weights(bn_weights)
-
-            logging.info("Completed!")
-    logging.info("Weights loaded!")
+    return boxes, scale
 
 
-def freeze_all(model, frozen=True):
-    model.trainable = not frozen
-    if isinstance(model, tf.keras.Model):
-        for l in model.layers:
-            freeze_all(l, frozen)
