@@ -14,6 +14,7 @@ flags.DEFINE_enum('split', 'train', ['train', 'val'], 'train or val dataset')
 flags.DEFINE_string('output_dir', './data/', 'path of output dataset')
 flags.DEFINE_string('classes', './model_data/voc2012_classes.txt', 'classes file')
 
+
 def main(argv):
     classes_map = {name: idx for idx, name in enumerate(
         open(FLAGS.classes).read().splitlines())}
@@ -49,6 +50,7 @@ def main(argv):
 
     print('{} : Wrote {} images to {}'.format(
             datetime.now(), counter, output_file))
+
 
 if __name__ == '__main__':
     app.run(main)

@@ -7,9 +7,9 @@ import tensorflow as tf
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
-import yolov3.dataset as dataset
-from yolov3.utils import read_classes
-from yolov3.model import (
+import utils.dataset as dataset
+from utils.yolo_utils import (
+    read_classes,
     yolo_anchors, yolo_anchor_masks
 )
 
@@ -94,7 +94,8 @@ def visualize_data(dataset, anchors):
                 # 1. anchor box center
                 anchor_boxes_xy = [(dx * dowsample_size, dy * dowsample_size)]
                 for i, box_xy in enumerate(anchor_boxes_xy):
-                    cv2.circle(img, box_xy, 10, colors[anchor_idx], -1)
+                    print(box_xy)
+                    cv2.circle(img, (int(box_xy[0]), int(box_xy[1])), 10, colors[anchor_idx], -1)
 
                 # 2. anchor box
                 anchor_box_wh = anchors[6 - anchor_box_idx * 3 + anchor_idx] * 416
@@ -111,12 +112,13 @@ def visualize_data(dataset, anchors):
             for grid_y in true_bbox:
                 for grid_x in grid_y:
                     for box in grid_x:
-                        cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                        cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
 
             axs[anchor_box_idx].imshow(img)
         f.tight_layout()
 
     plt.show()
+
 
 def main(argv):
     # Load the tf.data.Dataset from TFRecord files

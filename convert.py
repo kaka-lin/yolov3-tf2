@@ -3,8 +3,7 @@ import tensorflow as tf
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
-from yolov3.model import Yolov3
-from yolov3.utils import load_darknet_weights
+from models.yolov3 import Yolov3, load_darknet_weights
 
 flags.DEFINE_string('weights', './model_data/yolov3.weights',
                     'path to input weights file (darknet)')

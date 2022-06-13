@@ -88,7 +88,7 @@ $ python3 train.py --transfer=Fasle
     ```bash
     $ python3 train.py \
         --train_dataset ./data/voc2012_train.tfrecord \
-        --val_dataset ./data/voc_2012_val.tfrecord ]
+        --val_dataset ./data/voc_2012_val.tfrecord \
         --num_classes 20 \
         --batch_size 16 \
         --epochs 10 \

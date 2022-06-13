@@ -1,6 +1,6 @@
 import numpy as np
+from absl import logging
 import tensorflow as tf
-from absl.flags import FLAGS
 from tensorflow.keras import Model
 from tensorflow.keras.layers import (
     Conv2D,
@@ -20,15 +20,77 @@ from tensorflow.keras.losses import (
     sparse_categorical_crossentropy
 )
 
-# anchor boxes
-yolo_anchors = np.array([
-    (10, 13), (16, 30), (33, 23),
-    (30, 61), (62, 45), (59, 119),
-    (116, 90), (156, 198), (373, 326)], np.float32) / 416
+from utils.yolo_utils import yolo_anchors, yolo_anchor_masks
 
-yolo_anchor_masks = np.array([[6, 7, 8],
-                              [3, 4, 5],
-                              [0, 1, 2]])
+YOLOV3_LAYER_LIST = [
+    'yolo_darknet',
+    'yolo_conv_0',
+    'yolo_output_0',
+    'yolo_conv_1',
+    'yolo_output_1',
+    'yolo_conv_2',
+    'yolo_output_2',
+]
+
+
+def freeze_all(model, frozen=True):
+    model.trainable = not frozen
+    if isinstance(model, tf.keras.Model):
+        for l in model.layers:
+            freeze_all(l, frozen)
+
+
+def load_darknet_weights(model, weights_file):
+    with open(weights_file, 'rb') as wf:
+        major, minor, revision, seen, _ = np.fromfile(wf, dtype=np.int32, count=5)
+        layers = YOLOV3_LAYER_LIST
+
+        for layer_name in layers:
+            sub_model = model.get_layer(layer_name)
+            for i, layer in enumerate(sub_model.layers):
+                if not layer.name.startswith('conv2d'):
+                    continue
+
+                # BatchNormalization layer
+                batch_norm = None
+                if i + 1 < len(sub_model.layers) and \
+                        sub_model.layers[i + 1].name.startswith('batch_norm'):
+                    batch_norm = sub_model.layers[i + 1]
+
+                logging.info("{}/{} {}".format(
+                    sub_model.name, layer.name, 'bn' if batch_norm else 'bias'))
+
+                filters = layer.filters
+                kerner_size = layer.kernel_size[0]
+                #input_dim = layer.get_input_shape_at(0)[-1]
+                input_dim = layer.input_shape[-1]
+
+                if batch_norm is None:
+                    conv_bias = np.fromfile(wf, dtype=np.float32, count=filters)
+                else:
+                    # darknet [beta, gamma, mean, variance]
+                    bn_weights = np.fromfile(
+                        wf, dtype=np.float32, count=4*filters)
+                    # tf [gamma, beta, mean, variance]
+                    bn_weights = bn_weights.reshape((4, filters))[[1, 0, 2, 3]]
+
+                # darknet shape (out_dim, input_dim, height, width)
+                conv_shape = (filters, input_dim, kerner_size, kerner_size)
+                conv_weights = np.fromfile(
+                    wf, dtype=np.float32, count=np.product(conv_shape))
+
+                # tf shape (height, width, in_dim, out_dim)
+                conv_weights = conv_weights.reshape(
+                    conv_shape).transpose([2, 3, 1, 0])
+
+                if batch_norm is None:
+                    layer.set_weights([conv_weights, conv_bias])
+                else:
+                    layer.set_weights([conv_weights])
+                    batch_norm.set_weights(bn_weights)
+
+            logging.info("Completed!")
+    logging.info("Weights loaded!")
 
 
 def DarknetConv2D(x, filters, size, stride=1, batch_norm=True):
@@ -167,6 +229,9 @@ def yolo_boxes(pred, anchors, classes):
     box_confidence = tf.sigmoid(pred[..., 4:5])
     box_class_probs = tf.sigmoid(pred[..., 5:])
 
+    # Darknet raw box
+    pred_raw_box = tf.concat((box_xy, box_wh), axis=-1)
+
     # box_xy: (grid_size, grid_size, num_anchors, 2)
     # grid: (grdid_siez, grid_size, 1, 2)
     #       -> [0,0],[0,1],...,[0,12],[1,0],[1,1],...,[12,12]
@@ -175,10 +240,12 @@ def yolo_boxes(pred, anchors, classes):
 
     box_xy = (box_xy + tf.cast(grid, tf.float32)) / \
         tf.cast(grid_size, tf.float32)
+    # stride = tf.cast(416 // grid_size, tf.float32)
+    # box_xy = (box_xy + tf.cast(grid, tf.float32)) * stride
     box_wh = tf.exp(box_wh) * anchors
     pred_box = tf.concat((box_xy, box_wh), axis=-1)
 
-    return pred_box, box_confidence, box_class_probs
+    return pred_box, box_confidence, box_class_probs, pred_raw_box
 
 
 def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
@@ -308,138 +375,6 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
 
         return (xy_loss_sum + wh_loss_sum + confidence_loss_sum + classification_loss_sum)
     return yolo_loss
-
-
-###########################################################################################
-# Post-processing
-def yolo_eval(yolo_outputs,
-              image_shape,
-              input_dims=(416, 416),
-              classes=80,
-              max_boxes=100,
-              score_threshold=0.5,
-              iou_threshold=0.5):
-    # Retrieve outputs of the YOLO model.
-    num_layers = len(yolo_outputs)
-    anchors = yolo_anchors
-    anchor_mask = yolo_anchor_masks
-
-    for i in range(0, num_layers):
-        _boxes, _box_scores = yolo_boxes_and_scores(
-            yolo_outputs[i],
-            image_shape,
-            input_dims,
-            anchors[anchor_mask[i]],
-            classes)
-
-        if i == 0:
-            boxes, box_scores = _boxes, _box_scores
-        else:
-            boxes = tf.concat([boxes, _boxes], axis=0)
-            box_scores = tf.concat([box_scores, _box_scores], axis=0)
-
-    # Perform Score-filtering and Non-max suppression
-    scores, boxes, classes = yolo_non_max_suppression(boxes, box_scores,
-                                                      classes,
-                                                      max_boxes,
-                                                      score_threshold,
-                                                      iou_threshold)
-
-    return scores, boxes, classes
-
-
-def yolo_boxes_and_scores(yolo_output, image_shape, input_dims, anchors, classes):
-    """Process output layer"""
-    # yolo_boxes: pred_box, box_confidence, box_class_probs, pred_raw_box
-    pred_box, box_confidence, box_class_probs = yolo_boxes(
-        yolo_output, anchors, classes)
-
-    # Convert boxes to be ready for filtering functions.
-    # Convert YOLO box predicitions to bounding box corners.
-    # (x, y, w, h) -> (x1, y1, x2, y2)
-    box_xy = pred_box[..., 0:2]
-    box_wh = pred_box[..., 2:4]
-
-    ####################################################
-    # Correct boxes: coord transformation
-    #  now coord in relative padding_image (model input)
-    #  we need to transform it to relative resized image
-    image_shape = np.array(image_shape[0:2]) # (w, h)
-    input_dims = np.array(input_dims)
-
-    # offser:
-    #  we put the resized_image into padding_image,
-    #  so we change coord from relative padding_image
-    #  to relative resized_image
-    scale = min(input_dims/image_shape)
-    new_shape = image_shape * scale # (w, h)
-    offset = (input_dims - new_shape) / 2. / input_dims
-
-    # scale:
-    #  now scale is relative padding_image
-    #  change it to relative resized_image
-    #    original_xy / input_dims = box_xy
-    #    original_xy / new_shape = box_xy_res
-    #    -> original_xy = box_xy * input_dims
-    #    -> box_xy_res = (box_xy * input_dims) / new_shape
-    #    -> box_xy_res = box_xy * (input_dims) / new_shape)
-    scale = input_dims / new_shape
-    box_xy = (box_xy - offset) * scale
-    box_wh *= scale
-    ####################################################
-
-    box_x1y1 = box_xy - (box_wh / 2.)
-    box_x2y2 = box_xy + (box_wh / 2.)
-    boxes = tf.concat([box_x1y1, box_x2y2], axis=-1)
-    boxes = tf.reshape(boxes, [-1, 4])
-
-    # Compute box scores
-    box_scores = box_confidence * box_class_probs
-    box_scores = tf.reshape(box_scores, [-1, classes])
-    return boxes, box_scores
-
-
-def yolo_non_max_suppression(boxes, box_scores,
-                             classes=80,
-                             max_boxes=100,
-                             score_threshold=0.5,
-                             iou_threshold=0.5):
-    """Perform Score-filtering and Non-max suppression
-
-    boxes: (10647, 4)
-    box_scores: (10647, 80)
-    # 10647 = (13*13 + 26*26 + 52*52) * 3(anchor)
-    """
-
-    # Create a mask, same dimension as box_scores.
-    mask = box_scores >= score_threshold # (10647, 80)
-
-    output_boxes = []
-    output_scores = []
-    output_classes = []
-
-    # Perform NMS for all classes
-    for c in range(classes):
-        class_boxes = tf.boolean_mask(boxes, mask[:, c])
-        class_box_scores = tf.boolean_mask(box_scores[:, c], mask[:, c])
-
-        selected_indices = tf.image.non_max_suppression(
-            class_boxes, class_box_scores, max_boxes, iou_threshold)
-
-        class_boxes = tf.gather(class_boxes, selected_indices)
-        class_box_scores = tf.gather(class_box_scores, selected_indices)
-
-        classes = tf.ones_like(class_box_scores, 'int32') * c
-
-        output_boxes.append(class_boxes)
-        output_scores.append(class_box_scores)
-        output_classes.append(classes)
-
-    output_boxes = tf.concat(output_boxes, axis=0)
-    output_scores = tf.concat(output_scores, axis=0)
-    output_classes = tf.concat(output_classes, axis=0)
-
-    return output_scores, output_boxes, output_classes
 
 
 if __name__ == "__main__":

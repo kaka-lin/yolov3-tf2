@@ -8,11 +8,11 @@ from tensorflow.keras.callbacks import (
     TensorBoard
 )
 
-from yolov3.utils import *
-import yolov3.dataset as dataset
-from yolov3.model import (
-    Yolov3, YoloLoss,
-    yolo_anchors, yolo_anchor_masks,
+from utils.common import *
+from utils.yolo_utils import yolo_anchors, yolo_anchor_masks
+import utils.dataset as dataset
+from models.yolov3 import (
+    Yolov3, YoloLoss, freeze_all
 )
 
 flags.DEFINE_integer('size', 416, 'image size')

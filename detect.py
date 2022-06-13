@@ -7,9 +7,9 @@ import tensorflow as tf
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
-from yolov3.model import Yolov3, yolo_eval
-from yolov3.common import *
-from yolov3.utils import letterbox_image, yolo_correct_boxes
+from models.yolov3 import Yolov3
+from utils.yolo_utils import read_classes, read_anchors, generate_colors, yolo_eval, draw_outputs
+from utils.common import preprocess_image
 
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_string('weights', './checkpoints/yolov3.tf',
@@ -49,18 +49,15 @@ def main(argv):
 
     # 進行圖像輸入的前處理
     image = img_raw.numpy()
-    # (w, h)
-    image_shape = (image.shape[1], image.shape[0])
+    image_shape = image.shape[:2] # h, w
     input_dims = (FLAGS.size, FLAGS.size)
-
-    paddimg_image = letterbox_image(image, input_dims)
-    paddimg_image = paddimg_image/255.  # 進行圖像歸一處理
-    paddimg_image = tf.expand_dims(paddimg_image, 0)  # 增加 batch dimension
+    paddimg_image = preprocess_image(image, input_dims, keep_aspect_ratio=False)
 
     # 進行圖像偵測
     yolo_outputs = yolo.predict(paddimg_image)
     scores, boxes, classes = yolo_eval(
         yolo_outputs,
+        anchors,
         image_shape=image_shape,
         input_dims=input_dims,
         classes=FLAGS.num_classes,
@@ -68,11 +65,11 @@ def main(argv):
         iou_threshold=FLAGS.iou_threshold
     )
 
-    logging.info("detections:")
-    for i in range(scores.shape[0]):
-        logging.info("\t{}, {}, {}".format(
-            class_names[int(classes[i])], scores[i], boxes[i]
-        ))
+    # logging.info("detections:")
+    # for i in range(scores.shape[0]):
+    #     logging.info("\t{}, {}, {}".format(
+    #         class_names[int(classes[i])], scores[i], boxes[i]
+    #     ))
 
     # Draw bounding boxes on the image file
     image = draw_outputs(image, (scores, boxes, classes), class_names, colors)

@@ -1,5 +1,4 @@
 import tensorflow as tf
-from absl.flags import FLAGS
 
 feature_description = {
     'filename': tf.io.FixedLenFeature([], tf.string),
@@ -13,6 +12,7 @@ feature_description = {
     'y_maxes': tf.io.VarLenFeature(tf.float32),
     'image_raw': tf.io.FixedLenFeature([], tf.string),
 }
+
 
 def load_tfrecord_dataset(file_path):
     dataset = tf.data.TFRecordDataset(file_path)
@@ -98,9 +98,10 @@ def transform_target(y_train, anchors, anchor_masks, image_size=416):
     for anchor_idxs in anchor_masks:
         y_outs.append(transform_target_for_output(
             y_train, grid_size, anchor_idxs, best_anchor_idx))
-        grid_size *=2
+        grid_size *= 2
 
     return tuple(y_outs)
+
 
 @tf.function
 def transform_target_for_output(y_true, grid_size, anchor_idxs, best_anchor_idx):
