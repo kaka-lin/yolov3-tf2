@@ -11,7 +11,7 @@ model input size: (416, 416) []
 1. letterbox:
     scale = min((416, 416) / (1200, 630)) (w, h)
     resized_shape: (416.0, 218.4), unpad_size
-    pad_size:     (0,     197.6)
+    pad_size:      (0,     197.6)
 
 2. Get the boxes position on resized_image
     new_boxes = (boxes - pad_size // 2)
