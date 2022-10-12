@@ -7,7 +7,7 @@ import tensorflow as tf
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
-from tools.voc_to_tfrecord import *
+from tools.voc_to_tfrecord import process_image, parse_annot, create_tf_example
 
 flags.DEFINE_string('data_dir', './data/VOCdevkit/VOC2012/', 'PASCAL VOC dataset')
 flags.DEFINE_enum('split', 'train', ['train', 'val'], 'train or val dataset')

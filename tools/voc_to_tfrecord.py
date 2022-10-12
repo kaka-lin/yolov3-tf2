@@ -4,15 +4,14 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import tensorflow as tf
 
-
 def process_image(image_file):
     """Decode image at given path."""
     # Method 1: return <class 'tf.Tensor'>
     image_string = tf.io.read_file(image_file)
 
     # Method 2: return <class 'bytes'>
-    #with open(image_file, 'rb') as f:
-    #    image_string = f.read() # binary-string
+    # with open(image_file, 'rb') as f:
+    #     image_string = f.read() # binary-string
 
     try:
         image_data = tf.image.decode_jpeg(image_string, channels=3)
@@ -38,7 +37,7 @@ def parse_annot(annot_file, classes_map):
     depth = int(size.find('depth').text)
 
     xmin, ymin, xmax, ymax = [], [], [], []
-    classes_name, classes_id= [], []
+    classes_name, classes_id = [], []
 
     for obj in root.iter('object'):
         label = obj.find('name').text
@@ -69,6 +68,7 @@ def parse_annot(annot_file, classes_map):
     image_info_list.append(image_info)
 
     return image_info_list
+
 
 def create_tf_example(image_string, image_info_list):
     """Convert VOC ground truth to TFExample protobuf."""

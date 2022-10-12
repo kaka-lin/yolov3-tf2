@@ -6,7 +6,9 @@ Original paper: [YOLOv3: An Incremental Improvemen](https://pjreddie.com/media/f
 
 Darknet: https://github.com/pjreddie/darknet
 
-![](data/dog_output.jpg)
+![](data/dog_out.jpg)
+
+![](data/street_out.jpg)
 
 ## Step-by-Step
 
@@ -98,13 +100,27 @@ $ python3 train.py --transfer=Fasle
 
 ## Inference
 
-```bash
-$ python3 detect.py \
-    --classes ./model_data/voc2012_classes.txt \
-    --num_classes 20 \
-    --weights=./checkpoints/yolov3_train_5.tf \
-    --image=./data/street.jpg
-```
+1. Inference with pre-trained Darknet weights
+
+    ```bash
+    $ python3 detect.py
+    ```
+
+2. Inference with the model that you just trained
+
+    ```bash
+    $ python3 detect.py \
+        --classes ./model_data/voc2012_classes.txt \
+        --num_classes 20 \
+        --weights=./checkpoints/yolov3_train_5.tf \
+        --image=./data/street.jpg
+    ```
+
+3. Other command option please using `--help` to see, as below:
+
+    ```bash
+    $ python3 detect.py --help
+    ```
 
 ## Acknowledgments
 

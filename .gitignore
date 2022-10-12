@@ -27,3 +27,6 @@ model_data/*.h5
 # Tensorflow
 checkpoints/
 logs/
+
+# output file
+out/

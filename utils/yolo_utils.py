@@ -41,33 +41,46 @@ def generate_colors(class_names):
     return colors
 
 
-def scale_boxes(boxes, image_shape):
-    """ Scales the predicted boxes in order to be drawable on the image"""
-    height, width = image_shape
-    height, width = height/416, width/416
-    image_dims = tf.stack([width, height, width, height])
-    image_dims = tf.cast(tf.reshape(image_dims, [1, 4]), tf.float32)
-    boxes = boxes * image_dims
+def scale_boxes(boxes, inpute_shape, image_shape):
+    """ Rescales bounding boxes to the original image shape
+
+    This is for cv::resize().
+
+    Args:
+        inpu_shape: model input shape. (h, w)
+        image_shape: the shape of origin image. (h, w)
+    """
+    image_shape = np.array(image_shape)
+
+    # Example:
+    #   scale: (1200, 630) / (416, 416) = (2.88461538, 1.51442308)
+    #   resize_shape: (416, 416) unpad_size
+    scale = image_shape / inpute_shape
+    scale_dims = tf.stack([scale[1], scale[0], scale[1], scale[0]])
+    scale_dims = tf.cast(tf.reshape(scale_dims, [1, 4]), tf.float32)
+    boxes = boxes * scale_dims
     return boxes
 
 
-# Rescale boxes back to original image shape
 def rescale_boxes(boxes, inpute_shape, image_shape):
-    """
-    Rescales bounding boxes to the original image shape
+    """ Rescales bounding boxes to the original image shape.
 
-    Param inpu_shape: model input shape. (h, w)
-    Param image_shape: the shape of origin image. (h, w)
+    This is for letterbox().
+
+    Args:
+        inpu_shape: model input shape. (h, w)
+        image_shape: the shape of origin image. (h, w)
     """
-    height, width = image_shape
+    height, width = image_shape[0], image_shape[1]
     image_shape = np.array((width, height))
 
+    # 1. Calculate padding_size
+    #
     # The amount of padding that was added
     # Example:
-    #   min((416, 416) / (1242, 375), (w, h)
-    #   resized_shape: (416.0, 125.60386473429952), unpad_size
-    #   pad_size:      (0, 290.3961352657005)
-
+    #   min((416, 416) / (1200, 630), (w, h)
+    #   resized_shape: (416.0, 218.4), unpad_size
+    #   pad_size:      (0,     197.6)
     scale = min(inpute_shape / image_shape)
     resized_shape = image_shape * scale # unpad_size
     pad_size = inpute_shape - resized_shape
@@ -78,19 +91,23 @@ def rescale_boxes(boxes, inpute_shape, image_shape):
     resized_shape = tf.stack([resized_shape[0], resized_shape[1], resized_shape[0], resized_shape[1]])
     resized_shape = tf.cast(tf.reshape(resized_shape, [1, 4]), tf.float32)
 
-    image_dims = tf.stack([width, height, width, height])
-    image_dims = tf.cast(tf.reshape(image_dims, [1, 4]), tf.float32)
+    image_shape = tf.stack([width, height, width, height])
+    image_shape = tf.cast(tf.reshape(image_shape, [1, 4]), tf.float32)
 
-    # Rescale bounding boxes to dimension of original image
-    boxes = ((boxes - pad_size // 2) / resized_shape) * image_dims
+    # 2. Rescale bounding boxes to dimension of original image
+    # 與 scale_boxes() 一樣，如下：
+    #   ((boxes - pad_size // 2) => new_boxes: the boxes position on resize_image
+    #   (new_boxes / resized_shape) * image_shape
+    #   = new_boxes * image_shape / resize_shape (in scale_boxes() is inpute_shape)
+    boxes = ((boxes - pad_size // 2) / resized_shape) * image_shape
     return boxes
 
 
 ###########################################################################################
 
-def yolo_boxes(pred, anchors):
+def yolo_boxes(pred, input_dims, anchors):
     # pred: (batch_size, grid, grid, anchors, (tx, ty, tw, th, conf, ...classes))
-    grid_size = tf.shape(pred)[1]
+    grid_size = tf.shape(pred)[1:3]
 
     box_xy = tf.sigmoid(pred[..., 0:2])
     box_wh = pred[..., 2:4]
@@ -100,23 +117,24 @@ def yolo_boxes(pred, anchors):
     # box_xy: (grid_size, grid_size, num_anchors, 2)
     # grid: (grdid_siez, grid_size, 1, 2)
     #       -> [0,0],[0,1],...,[0,12],[1,0],[1,1],...,[12,12]
-    grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
+    grid = tf.meshgrid(tf.range(grid_size[1]), tf.range(grid_size[0]))
     grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
 
-    # box_xy = (box_xy + tf.cast(grid, tf.float32)) / \
-    #     tf.cast(grid_size, tf.float32)
-    stride = tf.cast(416 // grid_size, tf.float32)
+    # stride: 416 / grid_size
+    # [416/52, 416/26, 416/13] -> [8, 16, 32]
+    stride = tf.cast(input_dims // grid_size, tf.float32)
     box_xy = (box_xy + tf.cast(grid, tf.float32)) * stride
+
     box_wh = tf.exp(box_wh) * anchors
     pred_box = tf.concat((box_xy, box_wh), axis=-1)
     return pred_box, box_confidence, box_class_probs
 
 
-def yolo_boxes_and_scores(yolo_output, anchors, classes):
+def yolo_boxes_and_scores(yolo_output, input_dims, anchors, classes):
     """Process output layer"""
     # yolo_boxes: pred_box, box_confidence, box_class_probs, pred_raw_box
     pred_box, box_confidence, box_class_probs = yolo_boxes(
-        yolo_output, anchors)
+        yolo_output, input_dims, anchors)
 
     # Convert boxes to be ready for filtering functions.
     # Convert YOLO box predicitions to bounding box corners.
@@ -183,6 +201,7 @@ def yolo_eval(yolo_outputs,
               anchors,
               image_shape, # (h, w)
               input_dims=(416, 416),
+              letterbox=True,
               classes=80,
               max_boxes=100,
               score_threshold=0.5,
@@ -195,6 +214,7 @@ def yolo_eval(yolo_outputs,
     for i in range(0, num_layers):
         _boxes, _box_scores = yolo_boxes_and_scores(
             yolo_outputs[i],
+            input_dims,
             anchors[anchor_mask[i]],
             classes)
 
@@ -211,18 +231,16 @@ def yolo_eval(yolo_outputs,
                                                       score_threshold,
                                                       iou_threshold)
 
-    for box in boxes:
-        print("Boxes: ", box)
-
-    boxes = scale_boxes(boxes, image_shape) # resize
-    #boxes = rescale_boxes(boxes, input_dims, image_shape) # letter
-
+    if letterbox:
+        boxes = rescale_boxes(boxes, input_dims, image_shape) # letter
+    else:
+        boxes = scale_boxes(boxes, input_dims, image_shape) # resize
     return scores, boxes, classes
 
 
 def draw_outputs(image, outputs, class_names, colors):
-    #image_shape = np.array((image.shape[1], image.shape[0]))
-    #inpute_shape = np.array((416, 416))
+    image_shape = np.array((image.shape[1], image.shape[0]))
+    inpute_shape = np.array((416, 416))
     h, w, _ = image.shape
     scores, boxes, classes = outputs
     #boxes = scale_boxes(boxes, (h, w)) # resize
@@ -267,8 +285,6 @@ def draw_outputs(image, outputs, class_names, colors):
         left = max(0, np.floor(left + 0.5).astype('int32'))
         bottom = min(h, np.floor(bottom + 0.5).astype('int32'))
         right = min(w, np.floor(right + 0.5).astype('int32'))
-        print("Confidence: {}, Class: {}, Box: {}".format(
-            scores[i], class_names[int(classes[i])], [top, left, bottom, right]))
         class_id = int(classes[i])
         predicted_class = class_names[class_id]
         score = scores[i].numpy()
