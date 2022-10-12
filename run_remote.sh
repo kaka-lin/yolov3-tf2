@@ -1,5 +1,7 @@
 #!/bin/bash
 
+xhost +local:docker
+
 XSOCK=/tmp/.X11-unix
 XAUTH=/root/.Xauthority
 
@@ -14,7 +16,8 @@ if [[ $1 == "gpu" ]]; then
         --shm-size="20g" \
         --volume="$PWD:/root/yolov3-tf2" \
         --network=host \
-        tensorflow/tensorflow:latest
+        kakalin/kimage:cuda11.6-tf2.9.1-devel
+
 else
     docker run -it \
         -e DISPLAY=$DISPLAY \
@@ -25,5 +28,5 @@ else
         --shm-size="20g" \
         --volume="$PWD:/root/yolov3-tf2" \
         --network=host \
-        tensorflow/tensorflow:latest
+        kakalin/kimage:cuda11.6-tf2.9.1-devel
 fi
