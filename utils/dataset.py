@@ -64,12 +64,11 @@ def preprocess_data(x_train, y_train,
 
 
 def transform_target(y_train, anchors, anchor_masks, image_size=416):
-    """Area of anchor."""
-    # anchors shape: (9, 2)
-    # Note: normalization anchors to 0~1 (anchors / 416)
-    #       -> anchors and boxes_wh are moved to origin point
-    #       -> we can conveniently find the minimum
-    #          between anchors and boxes_wh to find the intersection area.
+    """Transform true boxes to training label format (y_trin)
+
+    bbox: (x1, y1, x2, y2, class)
+    y_train: (grid_y, grid_x, (bx, by, bw, bh, class))
+    """
     anchors = tf.cast(anchors, tf.float32)
     anchor_area = anchors[..., 0] * anchors[..., 1] # (9,)
 
@@ -81,7 +80,14 @@ def transform_target(y_train, anchors, anchor_masks, image_size=416):
                      (1, tf.shape(anchors)[0], 1)) # (N, 9, 2)
     boxes_area = boxes_wh[..., 0] * boxes_wh[..., 1] # (N, 9)
 
-    """Find IOU between box shifted to origin and anchor box."""
+    """Find IOU between box shifted to origin and anchor box.
+
+    anchors shape: (9, 2)
+    Note: normalization anchors to 0~1 (anchors / 416)
+          -> anchors and boxes_wh are moved to origin point
+          -> we can conveniently find the minimum
+             between anchors and boxes_wh to find the intersection area.
+    """
     intersection = tf.minimum(boxes_wh[..., 0], anchors[..., 0]) * \
         tf.minimum(boxes_wh[..., 1], anchors[..., 1]) # (N, 9)
     iou = intersection / (boxes_area + anchor_area - intersection) # (N, 9)
@@ -118,9 +124,6 @@ def transform_target_for_output(y_true, grid_size, anchor_idxs, best_anchor_idx)
     updates = tf.TensorArray(tf.float32, 1, dynamic_size=True)
 
     # Find which grid includes the center of object
-    #boxes_xy = y_true[..., 0:2]
-    #grid_xy = tf.cast(boxes_xy // (1 / grid_size), tf.int32)
-
     for i in range(N):
         if tf.equal(y_true[i][0], 0):
             continue
@@ -135,9 +138,14 @@ def transform_target_for_output(y_true, grid_size, anchor_idxs, best_anchor_idx)
 
             anchor_idx = tf.cast(tf.where(anchor_eq), tf.int32)
 
+            # center 的位置, ex: (7, 6, 2)
+            #   表示 center 為該 grid_size 裡，第二個 anchor裡的點 (6, 7)
             indices = indices.write(i, [grid_xy[1], grid_xy[0], anchor_idx[0][0]])
             updates = updates.write(i, [y_true[i][0], y_true[i][1], y_true[i][2], y_true[i][3], 1, y_true[i][4]])
 
+    # tf.TensorArray.stack():
+    #   Return the values in the TensorArray
+    #   as a stacked Tensor.
     #tf.print("indices: ", indices.stack())
     #tf.print("updates: ", updates.stack())
 
