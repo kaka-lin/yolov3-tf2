@@ -26,17 +26,25 @@ def letterbox_image(image, input_dims):
     return padding_image
 
 
-def preprocess_image(img, input_shape, 
-                     model_type="tf", keep_aspect_ratio=True):
+def preprocess_image(img, input_shape,
+                     model_type="tf",
+                     open_type="tf",
+                     keep_aspect_ratio=True):
     """pre-process for yolo"""
-    img_rgb  = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    if open_type == "cv":
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
     if keep_aspect_ratio:
-        image = letterbox_image(img_rgb, input_shape)
+        image = letterbox_image(img, input_shape)
     else:
-        image = cv2.resize(img_rgb, input_shape)
+        image = cv2.resize(img, input_shape)
+
     image = np.array(image, dtype='float32')
     image = image / 255.
+
     if model_type == "torch":
         image = np.transpose(image, (2, 0, 1))
     image = np.expand_dims(image, 0)
+
     return image

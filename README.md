@@ -8,7 +8,7 @@ Darknet: https://github.com/pjreddie/darknet
 
 ![](data/dog_out.jpg)
 
-![](data/street_out.jpg)
+![](data/street_out.png)
 
 ## Step-by-Step
 
@@ -72,6 +72,10 @@ $ python3 train.py --transfer=Fasle
     $ wget https://pjreddie.com/media/files/yolov3.weights -O model_data/yolov3.weights
     ```
 
+    ##### Testing pre-trained Darknet weights
+
+    <img src="./data/street_out.png" width=320>
+
 2. Convert Darknet weights to Tensorflow weights
 
     ```bash
@@ -112,9 +116,13 @@ $ python3 train.py --transfer=Fasle
     $ python3 detect.py \
         --classes ./model_data/voc2012_classes.txt \
         --num_classes 20 \
-        --weights=./checkpoints/yolov3_train_5.tf \
+        --weights=./checkpoints/yolov3_train_10.tf \
         --image=./data/street.jpg
     ```
+
+    ##### Testing the model that we just trained through 10 epochs
+
+    <img src="./data/street_result_cv.png" width=320>
 
 3. Other command option please using `--help` to see, as below:
 

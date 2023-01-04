@@ -9,12 +9,14 @@ import tensorflow as tf
 from absl import app, flags, logging
 from absl.flags import FLAGS
 
-from models.yolov3 import Yolov3
+from models.yolov3 import (
+    Yolov3,
+    yolo_eval
+)
 from utils.yolo_utils import (
     read_classes,
     read_anchors,
     generate_colors,
-    yolo_eval,
     draw_outputs
 )
 from utils.common import preprocess_image
@@ -31,7 +33,7 @@ flags.DEFINE_float('iou_threshold', 0.5, 'iou threshold')
 flags.DEFINE_float('score_threshold', 0.5, 'score threshold')
 flags.DEFINE_boolean('keep_aspect_ratio', True, 'resize image with unchanged aspect ratio')
 flags.DEFINE_string('image', './data/street.jpg', 'path to input image')
-flags.DEFINE_string('output', './out/output.jpg', 'path to output image')
+flags.DEFINE_string('output', './out/output.png', 'path to output image')
 flags.DEFINE_boolean('save', False, 'save image or not')
 
 
@@ -47,21 +49,31 @@ def main(argv):
 
     # Load classes and anchors
     class_names = read_classes(FLAGS.classes)
+    # NOTE: no normalize
     anchors = read_anchors(FLAGS.anchors)
     logging.info('Classes and Anchors loaded')
 
     # Generate colors for drawing bounding boxes.
     colors = generate_colors(class_names)
 
-    # 選一張圖像
+    # NOTE: 1. Open image with `OpenCV` or `tf.image.decode_image()`
+    #          would cause different result.
+    #       2. And need to notice related color space (RGB, BGR, YUV, etc.)
+
+    # 1. 使用 OpenCV 讀入圖像 (BGR)
+    # image = cv2.imread(FLAGS.image) # 載入圖像
+
+    # 2. 使用 Tensorflow 讀入圖像 (RGB)
     img_raw = tf.image.decode_image(
         open(FLAGS.image, 'rb').read(), channels=3)
+    image = img_raw.numpy()
 
     # 進行圖像輸入的前處理
-    image = img_raw.numpy()
     image_shape = image.shape[:2] # h, w
     input_dims = (FLAGS.size, FLAGS.size)
-    input_image = preprocess_image(image, input_dims, keep_aspect_ratio=FLAGS.keep_aspect_ratio)
+    input_image = preprocess_image(image, input_dims,
+                                   open_type="cv",
+                                   keep_aspect_ratio=FLAGS.keep_aspect_ratio)
 
     # 進行圖像偵測
     yolo_outputs = yolo.predict(input_image)
