@@ -66,7 +66,7 @@ def train(argv):
 
     # Build the model
     model = Yolov3(FLAGS.size, classes=FLAGS.num_classes)
-    #model.summary()
+    # model.summary()
 
     # Configure the model for transfer learning
     if FLAGS.transfer:
@@ -111,5 +111,7 @@ def train(argv):
     # Save the model
     model.save("./model_data/yolov3.h5")
 
+
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
     app.run(train)

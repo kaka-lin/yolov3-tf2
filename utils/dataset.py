@@ -115,6 +115,7 @@ def transform_target_for_output(y_true, grid_size, anchor_idxs, best_anchor_idx)
     N = tf.shape(y_true)[0]
 
     # y_true_out: (grid, grid, anchors, [x1, y1, x2, y2, obj, class])
+    # tf.shape(anchor_idxs)[0]: 3
     y_true_out = tf.zeros(
         (grid_size, grid_size, tf.shape(anchor_idxs)[0], 6))
 
