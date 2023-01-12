@@ -9,18 +9,20 @@ from tensorflow.keras.callbacks import (
 )
 
 from utils.common import *
-from utils.yolo_utils import yolo_anchors, yolo_anchor_masks
+from utils.yolo_utils import read_anchors, yolo_anchor_masks
 import utils.dataset as dataset
 from models.yolov3 import (
     Yolov3, YoloLoss, freeze_all
 )
 
-flags.DEFINE_integer('size', 416, 'image size')
+flags.DEFINE_integer('size', 416, 'the input size for model')
 flags.DEFINE_integer('epochs', 10, 'number of epochs')
 flags.DEFINE_integer('batch_size', 16, 'batch size')
 flags.DEFINE_integer('num_classes', 20, 'number of classes in the model')
 flags.DEFINE_integer('yolo_max_boxes', 100,
                      'maximum number of boxes per image')
+flags.DEFINE_string('anchors', './model_data/yolov3_anchors.txt',
+                    'path to anchors file')
 flags.DEFINE_string('train_dataset', './data/voc2012_train.tfrecord',
                     'path to the train dataset')
 flags.DEFINE_string('val_dataset', './data/voc2012_val.tfrecord',
@@ -41,13 +43,14 @@ def train(argv):
     raw_val_ds = dataset.load_tfrecord_dataset(FLAGS.val_dataset)
 
     # Preprocess the dataset
-    anchors = yolo_anchors
+    anchors = read_anchors(FLAGS.anchors)
+    anchors_normalized = anchors / FLAGS.size # for build_target
     anchor_masks = yolo_anchor_masks
 
     train_ds = raw_train_ds.map(lambda x, y: (
         dataset.preprocess_data(
             x, y,
-            anchors, anchor_masks,
+            anchors_normalized, anchor_masks,
             image_size=FLAGS.size,
             yolo_max_boxes=FLAGS.yolo_max_boxes)
     ))
@@ -58,7 +61,7 @@ def train(argv):
     val_ds = raw_val_ds.map(lambda x, y: (
         dataset.preprocess_data(
             x, y,
-            anchors, anchor_masks,
+            anchors_normalized, anchor_masks,
             image_size=FLAGS.size,
             yolo_max_boxes=FLAGS.yolo_max_boxes)
     ))
@@ -96,7 +99,7 @@ def train(argv):
     # Callbacks
     callbacks = [
         ReduceLROnPlateau(verbose=1),
-        EarlyStopping(patience=10, verbose=1),
+        # EarlyStopping(patience=10, verbose=1),
         ModelCheckpoint('checkpoints/yolov3_train_{epoch}.tf',
                         verbose=1, save_weights_only=True),
         TensorBoard(log_dir='logs')
@@ -113,5 +116,4 @@ def train(argv):
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
     app.run(train)

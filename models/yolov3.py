@@ -21,7 +21,7 @@ from tensorflow.keras.losses import (
 )
 
 from utils.yolo_utils import (
-    yolo_anchors, yolo_anchor_masks,
+    yolo_anchor_masks,
     broadcast_iou,
     scale_boxes,
     rescale_boxes
@@ -129,7 +129,8 @@ def DarknetConv2D(x, filters, size, stride=1, batch_norm=True):
                kernel_regularizer=tf.keras.regularizers.l2(0.0005))(x)
 
     if batch_norm:
-        x = BatchNormalization()(x)
+        x = BatchNormalization(momentum=0.99,
+                               epsilon=1e-3)(x)
         x = LeakyReLU(alpha=0.1)(x)
 
     return x
@@ -218,36 +219,44 @@ def yolo_boxes(pred, input_dims, anchors, isTraining=False):
     grid = tf.meshgrid(tf.range(grid_size[1]), tf.range(grid_size[0]))
     grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
 
-    if not isTraining:
-        # stride: 416 / grid_size
-        # [416/52, 416/26, 416/13] -> [8, 16, 32]
-        stride = tf.cast(input_dims // grid_size, tf.float32)
-        box_xy = (box_xy + tf.cast(grid, tf.float32)) * stride
-        box_wh = tf.exp(box_wh) * anchors
-    else:
-        box_xy = (box_xy + tf.cast(grid, tf.float32)) / \
-            tf.cast(grid_size, tf.float32)
-        box_wh = tf.exp(box_wh) * anchors
+    # stride: 416 / grid_size
+    # [416/52, 416/26, 416/13] -> [8, 16, 32]
+    # >  1. / gird_size: normalization
+    # > * 416          : scale box to 416x416 feature map
+    stride = tf.cast(input_dims // grid_size, tf.float32)
+    box_xy = (box_xy + tf.cast(grid, tf.float32)) * stride
+    box_wh = tf.exp(box_wh) * anchors
 
     box_x1y1 = box_xy - (box_wh / 2.)
     box_x2y2 = box_xy + (box_wh / 2.)
     bbox = tf.concat([box_x1y1, box_x2y2], axis=-1)
 
-    return bbox, box_confidence, box_class_probs, pred_box
+    if isTraining:
+        # bbox normalization 0~1 for training
+        # > because ground truth is normalizes to [0-1]
+        input_dims = tf.stack([input_dims[1], input_dims[0], input_dims[1], input_dims[0]])
+        input_dims = tf.cast(tf.reshape(input_dims, [1, 4]), tf.float32)
+        bbox = bbox / input_dims
+        return grid, bbox, box_confidence, box_class_probs, pred_box
+    return bbox, box_confidence, box_class_probs
 
 
 def yolo_boxes_and_scores(yolo_output, input_dims, anchors, classes):
     """Process output layer"""
     # yolo_boxes: pred_box, box_confidence, box_class_probs, pred_raw_box
-    pred_box, box_confidence, box_class_probs, pred_xywh = yolo_boxes(
+    pred_box, box_confidence, box_class_probs = yolo_boxes(
         yolo_output, input_dims, anchors)
 
     # Reshape box to: [N, (x1, y1, x2, y2)]
     boxes = tf.reshape(pred_box, [-1, 4])
 
     # Compute box scores
-    box_scores = box_confidence * box_class_probs
+    if classes > 1:
+        box_scores = box_confidence * box_class_probs
+    else:
+        box_scores = box_confidence
     box_scores = tf.reshape(box_scores, [-1, classes])
+
     return boxes, box_scores
 
 
@@ -338,10 +347,10 @@ def YoloLoss(anchors, input_dims=(416, 416), classes=80, ignore_thresh=0.5):
 
         # 1. transform all pred outputs.
         # y_pred: (batch_size, grid, grid, anchors, (tx, ty, tw, th, conf, ...cls))
-        pred_box, pred_confidence, pred_class_probs, pred_xywh = yolo_boxes(
+        grid, pred_box, pred_confidence, pred_class_probs, raw_pred_xywh = yolo_boxes(
             y_pred, input_dims, anchors, isTraining=True)
-        pred_xy = pred_xywh[..., 0:2]
-        pred_wh = pred_xywh[..., 2:4]
+        raw_pred_xy = raw_pred_xywh[..., 0:2]
+        raw_pred_wh = raw_pred_xywh[..., 2:4]
 
         # 2. transform all true outputs.
         # y_true: (batch_size, grid, grid, anchors, (x1, y1, x2, y2, conf, cls))
@@ -351,18 +360,18 @@ def YoloLoss(anchors, input_dims=(416, 416), classes=80, ignore_thresh=0.5):
         true_wh = true_box[..., 2:4] - true_box[..., 0:2]
 
         # give higher weights to small boxes
-        box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1]
+        box_loss_scale = 2 - 1.0 * true_wh[..., 0] * true_wh[..., 1]
 
         # 3. Invert ture_boxes to darknet style box to calculate loss.
         # true_box: already normalization to 0~1 through divided 416
         grid_size = tf.shape(y_true)[1]
-        grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
-        grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)
-        true_xy = true_xy * tf.cast(grid_size, tf.float32) - \
-            tf.cast(grid, tf.float32)
+        # grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
+        # grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)
 
-        true_wh = tf.math.log(true_wh / anchors)
-        true_wh = tf.where(tf.math.is_inf(true_wh), tf.zeros_like(true_wh), true_wh)  # avoid log(0)=-inf
+        raw_true_xy = true_xy * tf.cast(grid_size, tf.float32) - \
+            tf.cast(grid, tf.float32)
+        raw_true_wh = tf.math.log(true_wh / anchors * input_dims)
+        raw_true_wh = tf.where(tf.math.is_inf(raw_true_wh), tf.zeros_like(raw_true_wh), raw_true_wh)  # avoid log(0)=-inf
 
         # 4. calculate all masks.
         #
@@ -396,9 +405,9 @@ def YoloLoss(anchors, input_dims=(416, 416), classes=80, ignore_thresh=0.5):
         #
         # 5-1. Calculate `coordinate loss`.
         xy_loss = box_loss_scale * true_conf_mask * \
-                  tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)
+                  tf.reduce_sum(tf.square(raw_true_xy - raw_pred_xy), axis=-1)
         wh_loss = box_loss_scale * true_conf_mask * \
-                  tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1)
+                  tf.reduce_sum(tf.square(raw_true_wh - raw_pred_wh), axis=-1)
 
         # 5-2. Calculate `classification loss`.
         #
@@ -473,6 +482,7 @@ def yolo_eval(yolo_outputs,
     else:
         boxes = scale_boxes(boxes, input_dims, image_shape) # resize
     return scores, boxes, classes
+
 
 if __name__ == "__main__":
     model = Yolov3(416, classes=20)

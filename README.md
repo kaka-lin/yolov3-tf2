@@ -93,11 +93,13 @@ $ python3 train.py --transfer=Fasle
 
     ```bash
     $ python3 train.py \
-        --train_dataset ./data/voc2012_train.tfrecord \
-        --val_dataset ./data/voc_2012_val.tfrecord \
+        --size 416 \
+        --epochs 10 \
         --num_classes 20 \
         --batch_size 16 \
-        --epochs 10 \
+        --train_dataset ./data/voc2012_train.tfrecord \
+        --val_dataset ./data/voc_2012_val.tfrecord \
+        --transfer=True \
         --pretrained_weights ./checkpoints/yolov3.tf \
         --weights_num_classes 80
     ```

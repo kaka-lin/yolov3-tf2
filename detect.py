@@ -21,7 +21,7 @@ from utils.yolo_utils import (
 )
 from utils.common import preprocess_image
 
-flags.DEFINE_integer('size', 416, 'resize images to')
+flags.DEFINE_integer('size', 416, 'the input size for model')
 flags.DEFINE_string('weights', './checkpoints/yolov3.tf',
                     'path to weights file')
 flags.DEFINE_string('classes', './model_data/coco_classes.txt',
@@ -31,7 +31,7 @@ flags.DEFINE_string('anchors', './model_data/yolov3_anchors.txt',
 flags.DEFINE_integer('num_classes', 80, 'number of classes in the model')
 flags.DEFINE_float('iou_threshold', 0.5, 'iou threshold')
 flags.DEFINE_float('score_threshold', 0.5, 'score threshold')
-flags.DEFINE_boolean('keep_aspect_ratio', True, 'resize image with unchanged aspect ratio')
+flags.DEFINE_boolean('keep_aspect_ratio', True, 'resize image with unchanges/changed aspect ratio')
 flags.DEFINE_string('image', './data/street.jpg', 'path to input image')
 flags.DEFINE_string('output', './out/output.png', 'path to output image')
 flags.DEFINE_boolean('save', False, 'save image or not')
@@ -61,9 +61,11 @@ def main(argv):
     #       2. And need to notice related color space (RGB, BGR, YUV, etc.)
 
     # 1. 使用 OpenCV 讀入圖像 (BGR)
+    # open_type = "cv"
     # image = cv2.imread(FLAGS.image) # 載入圖像
 
     # 2. 使用 Tensorflow 讀入圖像 (RGB)
+    open_type = "tf"
     img_raw = tf.image.decode_image(
         open(FLAGS.image, 'rb').read(), channels=3)
     image = img_raw.numpy()
@@ -72,7 +74,7 @@ def main(argv):
     image_shape = image.shape[:2] # h, w
     input_dims = (FLAGS.size, FLAGS.size)
     input_image = preprocess_image(image, input_dims,
-                                   open_type="cv",
+                                   open_type=open_type,
                                    keep_aspect_ratio=FLAGS.keep_aspect_ratio)
 
     # 進行圖像偵測
