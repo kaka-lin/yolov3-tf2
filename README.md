@@ -132,8 +132,18 @@ $ python3 train.py --transfer=Fasle
     $ python3 detect.py --help
     ```
 
-## Acknowledgments
+## References
+
+- [pjreddie/darknet](https://github.com/pjreddie/darknet)
+  - official yolov3 implementation
 
 - [YAD2K](https://github.com/allanzelener/YAD2K)
-- [keras-yolo2](https://github.com/experiencor/keras-yolo2)
+  - models
+
+- [qqwweee/keras-yolo3 ](https://github.com/qqwweee/keras-yolo3)
+  - models
+  - loss functions
+
 - [yolov3-tf2](https://github.com/zzh8829/yolov3-tf2)
+  - models
+  - loss functions
